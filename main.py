@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 import sqlite3
@@ -19,21 +19,28 @@ log = logging.getLogger(__name__)
 LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 12.0     # Use `8.0` for strict max value
 MIN_WHITE_DWARF_PROB: float = 0.75
-MAX_DIST: int = 1000                        # In units of pc.
+MAX_DIST: float = 1000                      # In units of pc.
 MIN_STARS_IN_TOP_THIRD: int = 3
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
+ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
+ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
+PARSEC_TRACK: str = 'parsec_CAF09_v1'
 
 COLS: dict[str, str] = dict(
         # Hunt & Reffert 2024 clusters data.
-        cluster_name='Name', cluster_type='Type', cluster_dist='Distance',
+        cluster_name='Name',
+        cluster_type='Type',
+        cluster_dist='dist50',
         cluster_log_age='logAge',
 
         # Hunt & Reffert 2024 members data.
-        member_cluster_name='Name', member_gaia_id='GaiaDR3',
+        member_cluster_name='Name',
+        member_gaia_id='GaiaDR3',
         member_mass='Mass',
 
         # Gentile Fusillo et. al. 2021 white dwarfs data.
-        white_dwarf_gaia_id='GaiaEDR3', white_dwarf_prob='Pwd',
+        white_dwarf_gaia_id='GaiaEDR3',
+        white_dwarf_prob='Pwd',
         )
 
 # For each segment (low, high, alpha)
@@ -123,9 +130,9 @@ def main(args: argparse.Namespace) -> None:
         members = load_table('./Tables/members.parquet')
         white_dwarfs = load_table('./Tables/maincat.parquet')
         isochrones = ezpadova.get_isochrones(
-                logage=(6.4, 10.1, 0.05),
-                Z=(0.015, 0.015, 0.0),
-                track_parsec='parsec_CAF09_v1.2S',
+                logage=ISOCHRONE_LOG_AGE,
+                Z=ISOCHRONE_Z,
+                track_parsec=PARSEC_TRACK,
                 )
     except Exception as e:
         log.error(e)
