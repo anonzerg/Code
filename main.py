@@ -133,15 +133,15 @@ def estimate_white_dwarfs_main_seq(
     if top_third < MIN_STARS_IN_TOP_THIRD:
         return None
 
-    faintest_top_third_mass = top_third[top_third - 1]
-    imf_sacle = top_third / count_stars_in_mass_range(faintest_top_third_mass, turnoff_mass)
+    faintest_top_third_mass = main_seq_masses[top_third - 1]
+    imf_scale = top_third / count_stars_in_mass_range(faintest_top_third_mass, turnoff_mass)
 
     return dict(
-            expected_white_dwarf_count = imf_sacle * count_stars_in_mass_range(
+            expected_white_dwarf_count = imf_scale * count_stars_in_mass_range(
                 white_dwarf_prog_mass,
                 MAX_WHITE_DWARF_PROG_MASS,
                 ),
-            estimated_main_seq_count = imf_sacle * count_stars_in_mass_range(
+            estimated_main_seq_count = imf_scale * count_stars_in_mass_range(
                 LOWEST_MS_MASS, turnoff_mass),
             )
 
@@ -189,11 +189,11 @@ def main(args: argparse.Namespace) -> None:
             ]
 
     white_dwarf_ids = set(white_dwarfs.loc[
-        white_dwarfs[COLS['white_dwarf_prob]] >MIN_WHITE_DWARF_PROB,
+        white_dwarfs[COLS['white_dwarf_prob']] > MIN_WHITE_DWARF_PROB,
         COLS['white_dwarf_gaia_id']
         ])
 
-    members.assign(
+    members = members.assign(
             is_white_dwarf = members[COLS['member_gaia_id']].isin(white_dwarf_ids)
             )
 
@@ -229,19 +229,19 @@ def main(args: argparse.Namespace) -> None:
             cluster_name=cluster_name,
             turnoff_mass=turnoff_mass,
             white_dwarf_prog_mass=white_dwarf_prog_mass,
-            observed_white_dwarfs=int(cluster_members.is_white_dwarf.sum())
+            observed_white_dwarfs=int(cluster_members.is_white_dwarf.sum()),
             **counts,
             ))
 
     if not results:
-        log.error('No cluster passed the sellection process.')
+        log.error('No cluster passed the selection process.')
         sys.exit(1)
 
     results = pd.DataFrame(results)
-    results['observed_ration'] = results.observed_white_dwarfs / results.estimated_main_seq_count
+    results['observed_ratio'] = results.observed_white_dwarfs / results.estimated_main_seq_count
     results.to_csv(args.output, index=False)
     log.info(f'{len(results)} clusters | expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f} '
-             f'| observed White Dwarfs {results.observed_white_dwarfs.sum()})
+             f'| observed White Dwarfs {results.observed_white_dwarfs.sum()}')
 
 
 if __name__ == '__main__':
