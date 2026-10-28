@@ -23,7 +23,6 @@ MAX_DIST: int = 1000                        # In units of pc.
 MIN_STARS_IN_TOP_THIRD: int = 3
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 
-
 COLS: dict[str, str] = dict(
         # Hunt & Reffert 2024 clusters data.
         cluster_name='Name', cluster_type='Type', cluster_dist='Distance',
@@ -47,34 +46,6 @@ IMF_SEGMENTS: list[tuple[float, float, float]] = [
 IMF_AMPS: list[float] = [1.0]
 for (_, _, previous_alpha), (mass_break, _, alpha) in zip(IMF_SEGMENTS[:-1], IMF_SEGMENTS[1:]):
     IMF_AMPS.append(IMF_AMPS[-1] * mass_break**(alpha-previous_alpha))
-
-
-def kroupa_IMF(mass: float) -> float:
-    if mass < IMF_SEGMENTS[0][0] or mass >= IMF_SEGMENTS[-1][1]:
-        return 0.0
-
-    for i, (low, high, alpha) in enumerate(IMF_SEGMENTS):
-        if low <= mass < high:
-            return IMF_AMPS[i] * mass ** (-1.0 * alpha)
-
-    return 0.0
-
-
-def numerical_integral_IMF(low: float, high: float) -> float:
-    if high <= low:
-        return 0.0
-    
-    integral = 0.0
-
-    for i, (l, h, alpha) in enumerate(IMF_SEGMENTS):
-        a = max(low, l)
-        b = min(high, h)
-
-        if b > a:
-            beta = 1.0 - alpha
-            integral += IMF_AMPS[i] / beta * (b**beta - a**beta)
-        
-    return integral
 
 
 def count_stars_in_mass_range(mass_low: float, mass_high: float) -> float:
@@ -144,7 +115,6 @@ def estimate_white_dwarfs_main_seq(
             estimated_main_seq_count = imf_scale * count_stars_in_mass_range(
                 LOWEST_MS_MASS, turnoff_mass),
             )
-
 
 
 def main(args: argparse.Namespace) -> None:
