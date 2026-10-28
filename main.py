@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 # Constants
 LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
-MAX_WHITE_DWARF_PROG_MASS: float = 12.0     # Use `8.0` for strict max value
+MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value
 MIN_WHITE_DWARF_PROB: float = 0.75
 MAX_DIST: float = 1000                      # In units of pc.
 MIN_STARS_IN_TOP_THIRD: int = 3
@@ -92,7 +92,10 @@ def build_mass_table(isochrones: pd.DataFrame) -> pd.DataFrame:
     for log_age, isochrone in isochrones.groupby('logAge'):
         rows.append(dict(
             log_age=log_age,
-            turnoff_mass=isochrone.loc[isochrone.label <= MAX_MAIN_SEQ_PARSEC_LABEL, 'Mini'].max(),
+            turnoff_mass=isochrone.loc[
+                isochrone.label <= MAX_MAIN_SEQ_PARSEC_LABEL,
+                'Mini'
+                ].max(),
             white_dwarf_prog_mass=isochrone.Mini.max(),
             ))
 
@@ -112,7 +115,13 @@ def estimate_white_dwarfs_main_seq(
         return None
 
     faintest_top_third_mass = main_seq_masses[top_third - 1]
-    imf_scale = top_third / count_stars_in_mass_range(faintest_top_third_mass, turnoff_mass)
+    stars_in_calibrated_range = int(
+            (main_seq_masses >= faintest_top_third_mass).sum()
+            )
+    imf_scale = stars_in_calibrated_range / count_stars_in_mass_range(
+            faintest_top_third_mass,
+            turnoff_mass
+            )
 
     return dict(
             expected_white_dwarf_count = imf_scale * count_stars_in_mass_range(
@@ -179,6 +188,17 @@ def main(args: argparse.Namespace) -> None:
     results = []
     for cluster_name, log_age in zip(clusters[COLS['cluster_name']], clusters[COLS['cluster_log_age']]):
         if cluster_name not in members_by_cluster:
+            continue
+
+        if not np.isfinite(log_age):
+            log.warning(f'Skipping {cluster_name}. Missing logAge.')
+            continue
+
+        log_age_grid_low = mass_table.log_age.iloc[0]
+        log_age_grid_high = mass_table.log_age.iloc[-1]
+
+        if not log_age_grid_low <= log_age <= log_age_grid_high:
+            log.warning(f'Skipping {cluster_name}. {log_age} outside isochrone grid.')
             continue
 
         cluster_members = members_by_cluster[cluster_name]
