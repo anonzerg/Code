@@ -1,0 +1,3 @@
+[submodule "ezpadova"]
+	path = ezpadova
+	url = https://github.com/mfouesneau/ezpadova.git
