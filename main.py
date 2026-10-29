@@ -5,6 +5,7 @@ import sqlite3
 import logging
 import argparse
 from pathlib import Path
+from contextlib import closing
 
 import ezpadova
 import numpy as np
@@ -75,16 +76,21 @@ def load_table(path: str | Path) -> pd.DataFrame:
     if not isinstance(path, Path):
         path = Path(path)
 
-    if path.suffix == '.parquet':
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    suffix = path.suffix.lower()
+
+    if suffix == '.parquet':
         return pd.read_parquet(path)
 
-    elif path.suffix in ('.sqlite', '.sqlite3', '.db', '.db3'):
-        con = sqlite3.connect(path)
-        dataframe = pd.read_sql(f'SELECT * FROM {path.stem}', con)
-        con.close()
-        return dataframe
+    # FIXME: Assumes table name is the same as database name.
+    elif suffix in ('.sqlite', '.sqlite3', '.db', '.db3'):
+        with closing(sqlite3.connect(path)) as con:
+            return pd.read_sql(f'SELECT * FROM {path.stem}', con)
+
     else:
-        raise ValueError(f'{path.suffix} files are not supported.')
+        raise ValueError(f'{suffix} files are not supported.')
 
 
 def build_mass_table(isochrones: pd.DataFrame) -> pd.DataFrame:
@@ -248,7 +254,7 @@ if __name__ == '__main__':
             '--output',
             type=Path,
             default=Path('white_dwarf_expected_vs_observed.csv'),
-            help='output csv path (default is %(default)s',
+            help='output csv path (default is %(default)s)',
             )
     args = parser.parse_args()
 
