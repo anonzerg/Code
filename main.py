@@ -27,7 +27,7 @@ MIN_STARS_IN_TOP_THIRD: int = 3
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
 ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
-PARSEC_TRACK: str = 'parsec_CAF09_v1'
+PARSEC_TRACK: str = 'parsec_CAF09_v1.2S'
 
 
 COLS: dict[str, str] = dict(
@@ -87,10 +87,19 @@ def load_table(path: str | Path) -> pd.DataFrame:
     if suffix == '.parquet':
         return pd.read_parquet(path)
 
-    # FIXME: Assumes table name is the same as database name.
     elif suffix in ('.sqlite', '.sqlite3', '.db', '.db3'):
         with closing(sqlite3.connect(path)) as con:
-            return pd.read_sql(f'SELECT * FROM {path.stem}', con)
+            tables = [row[0] for row in con.execute(
+                'SELECT name FROM sqlite_master WHERE type=\'table\''
+                )]
+            if path.stem in tables:
+                table = path.stem
+            elif len(tables) == 1:
+                table = tables[0]
+            else:
+                raise ValueError(f'Cannot pick a table in {path}. Found {tables}')
+
+            return pd.read_sql(f'SELECT * FROM {table}', con)
 
     else:
         raise ValueError(f'{suffix} files are not supported.')
@@ -153,7 +162,7 @@ def main(args: argparse.Namespace) -> None:
                 track_parsec=PARSEC_TRACK,
                 )
     except Exception as e:
-        log.error(e)
+        log.exception(e)
         sys.exit(1)
 
     for table, keys in [
