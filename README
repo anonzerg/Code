@@ -1,4 +1,14 @@
 Code for my Master's Thesis.
 Currently working on White Dwarfs in Open Clusters.
 
+Install:
+    git clone --recurse-submodules https://github.com/anonzerg/Code.git && cd Code
+    python3 -m venv .venv
+    source .venv/bin/active
+    pip install -r requirements.txt
+    pip install ./ezpadova
+
+Run:
+    ./main.py -h
+
 contact: anonzerg@proton.me
