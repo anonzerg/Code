@@ -28,6 +28,7 @@ MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, 
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
 ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
 PARSEC_TRACK: str = 'parsec_CAF09_v1.2S'
+ISOCHRONE_CACHE: Path = Path('./Tables/isochrones.parquet')
 
 
 COLS: dict[str, str] = dict(
@@ -105,6 +106,19 @@ def load_table(path: str | Path) -> pd.DataFrame:
         raise ValueError(f'{suffix} files are not supported.')
 
 
+def load_isochrones() -> pd.DataFrame:
+    if ISOCHRONE_CACHE.exists():
+        log.info(f'Isochrones already cached. using {ISOCHRONE_CACHE}')
+        return pd.read_parquet(ISOCHRONE_CACHE)
+
+    isochrones = ezpadova.get_isochrones(
+            logage=ISOCHRONE_LOG_AGE,
+            Z=ISOCHRONE_Z,
+            track_parsec=PARSEC_TRACK,
+            )
+    return isochrones.to_parquet(ISOCHRONE_CACHE, index=False)
+
+
 def build_mass_table(isochrones: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for log_age, isochrone in isochrones.groupby('logAge'):
@@ -156,11 +170,7 @@ def main(args: argparse.Namespace) -> None:
         clusters = load_table('./Tables/clusters.sqlite')
         members = load_table('./Tables/members.parquet')
         white_dwarfs = load_table('./Tables/maincat.parquet')
-        isochrones = ezpadova.get_isochrones(
-                logage=ISOCHRONE_LOG_AGE,
-                Z=ISOCHRONE_Z,
-                track_parsec=PARSEC_TRACK,
-                )
+        isochrones = load_isochrones()
     except Exception as e:
         log.exception(e)
         sys.exit(1)
