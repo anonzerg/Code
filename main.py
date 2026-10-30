@@ -191,7 +191,7 @@ def main(args: argparse.Namespace) -> None:
         log.error(f'Missing isochrone columns {missing}. Available {list(isochrones.columns)}')
         sys.exit(1)
 
-    mass_table = build_mass_table(isochrones)
+    mass_table = build_mass_table(isochrones).dropna().reset_index(drop=True)
 
     clusters = clusters[
             (clusters[COLS['cluster_type']] == 'o')
@@ -210,6 +210,9 @@ def main(args: argparse.Namespace) -> None:
     members = members.assign(
             is_white_dwarf = members[COLS['member_gaia_id']].isin(white_dwarf_ids)
             )
+
+    if not members.is_white_dwarf.any():
+        log.warning('No cluster member matched the White Dwarfs catalog. Check Gaia ID dtypes.')
 
     members_by_cluster = dict(tuple(members.groupby(COLS['member_cluster_name'])))
 
@@ -248,6 +251,7 @@ def main(args: argparse.Namespace) -> None:
                 white_dwarf_prog_mass
                 )
         if counts is None:
+            log.info(f'Skipping {cluster_name}. Too few calibration stars.')
             continue
 
         results.append(dict(
@@ -263,7 +267,7 @@ def main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     results = pd.DataFrame(results)
-    results['observed_ratio'] = results.observed_white_dwarfs / results.estimated_main_seq_count
+    results['observed_ratio'] = results.observed_white_dwarfs / results.estimated_main_seq_count.where(results.expected_white_dwarf_count > 0)
     results.to_csv(args.output, index=False)
     log.info(f'{len(results)} clusters | expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f} '
              f'| observed White Dwarfs {results.observed_white_dwarfs.sum()}')
