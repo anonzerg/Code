@@ -11,7 +11,6 @@ from contextlib import closing
 
 import ezpadova
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
 
 
@@ -36,7 +35,7 @@ COLS: dict[str, str] = dict(
         cluster_name='Name',
         cluster_type='Type',
         cluster_dist='dist50',
-        cluster_log_age='logAge',
+        cluster_log_age='logAge50',
 
         # Hunt & Reffert 2024 members data.
         member_cluster_name='Name',
@@ -116,7 +115,9 @@ def load_isochrones() -> pd.DataFrame:
             Z=ISOCHRONE_Z,
             track_parsec=PARSEC_TRACK,
             )
-    return isochrones.to_parquet(ISOCHRONE_CACHE, index=False)
+    ISOCHRONE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    isochrones.to_parquet(ISOCHRONE_CACHE, index=False)
+    return isochrones
 
 
 def build_mass_table(isochrones: pd.DataFrame) -> pd.DataFrame:
@@ -160,8 +161,11 @@ def estimate_white_dwarfs_main_seq(
                 white_dwarf_prog_mass,
                 MAX_WHITE_DWARF_PROG_MASS,
                 ),
-            estimated_main_seq_count = imf_scale * count_stars_in_mass_range(
-                LOWEST_MS_MASS, turnoff_mass),
+            expected_main_seq_count = imf_scale * count_stars_in_mass_range(
+                LOWEST_MS_MASS,
+                turnoff_mass
+                ),
+            observed_main_seq_count = len(main_seq_masses),
             )
 
 
@@ -245,12 +249,12 @@ def main(args: argparse.Namespace) -> None:
                 mass_table.white_dwarf_prog_mass,
                 )
         
-        counts = estimate_white_dwarfs_main_seq(
+        expected_counts = estimate_white_dwarfs_main_seq(
                 cluster_members[COLS['member_mass']].dropna().to_numpy(),
                 turnoff_mass,
                 white_dwarf_prog_mass
                 )
-        if counts is None:
+        if expected_counts is None:
             log.info(f'Skipping {cluster_name}. Too few calibration stars.')
             continue
 
@@ -258,8 +262,8 @@ def main(args: argparse.Namespace) -> None:
             cluster_name=cluster_name,
             turnoff_mass=turnoff_mass,
             white_dwarf_prog_mass=white_dwarf_prog_mass,
-            observed_white_dwarfs=int(cluster_members.is_white_dwarf.sum()),
-            **counts,
+            observed_white_dwarf_count=int(cluster_members.is_white_dwarf.sum()),
+            **expected_counts,
             ))
 
     if not results:
@@ -267,10 +271,15 @@ def main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     results = pd.DataFrame(results)
-    results['observed_ratio'] = results.observed_white_dwarfs / results.estimated_main_seq_count.where(results.expected_white_dwarf_count > 0)
+    results['expected_ratio'] = results.expected_white_dwarf_count / results.expected_main_seq_count
+    results['observed_ratio'] = results.observed_white_dwarf_count / results.observed_main_seq_count
     results.to_csv(args.output, index=False)
-    log.info(f'{len(results)} clusters | expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f} '
-             f'| observed White Dwarfs {results.observed_white_dwarfs.sum()}')
+
+    log.info(f'{len(results)} Open Clusters.')
+    log.info(f'Expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f}')
+    log.info(f'Observed White Dwarfs {results.observed_white_dwarf_count.sum():.0f}')
+    log.info(f'Expected Main Seq Stars {results.expected_main_seq_count.sum():.0f}')
+    log.info(f'Observed Main Seq Stars {results.observed_main_seq_count.sum():.0f}')
 
 
 if __name__ == '__main__':
