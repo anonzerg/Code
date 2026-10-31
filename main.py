@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value.
 MIN_WHITE_DWARF_PROB: float = 0.75
-MAX_DIST: float = 500.0                     # In units of pc.
+RUWE_CUTOFF: float = 1.4                    # Above this value the source is non-single star
 MIN_STARS_IN_TOP_THIRD: int = 3
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
@@ -40,7 +40,8 @@ COLS: dict[str, str] = dict(
         # Hunt & Reffert 2024 members data.
         member_cluster_name='Name',
         member_gaia_id='GaiaDR3',
-        member_mass='Mass',
+        member_mass='Mass50',
+        member_ruwe='RUWE',
 
         # Gentile Fusillo et. al. 2021 white dwarfs data.
         white_dwarf_gaia_id='GaiaEDR3',
@@ -171,7 +172,7 @@ def estimate_white_dwarfs_main_seq(
 
 def main(args: argparse.Namespace) -> None:
     try:
-        clusters = load_table('./Tables/clusters.sqlite')
+        clusters = load_table('./Tables/clusters.parquet')
         members = load_table('./Tables/members.parquet')
         white_dwarfs = load_table('./Tables/maincat.parquet')
         isochrones = load_isochrones()
@@ -199,11 +200,12 @@ def main(args: argparse.Namespace) -> None:
 
     clusters = clusters[
             (clusters[COLS['cluster_type']] == 'o')
-            & (clusters[COLS['cluster_dist']] < MAX_DIST)
+            & (clusters[COLS['cluster_dist']] < args.dist)
             ]
 
     members = members[
-            members[COLS['member_cluster_name']].isin(clusters[COLS['cluster_name']])
+            (members[COLS['member_cluster_name']].isin(clusters[COLS['cluster_name']]))
+            & (members[COLS['member_ruwe']] < RUWE_CUTOFF)
             ]
 
     white_dwarf_ids = set(white_dwarfs.loc[
@@ -275,7 +277,7 @@ def main(args: argparse.Namespace) -> None:
     results['observed_ratio'] = results.observed_white_dwarf_count / results.observed_main_seq_count
     results.to_csv(args.output, index=False)
 
-    log.info(f'{len(results)} Open Clusters.')
+    log.info(f'{len(results)} Open Clusters have White Dwarfs.')
     log.info(f'Expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f}')
     log.info(f'Observed White Dwarfs {results.observed_white_dwarf_count.sum():.0f}')
     log.info(f'Expected Main Seq Stars {results.expected_main_seq_count.sum():.0f}')
@@ -290,6 +292,13 @@ if __name__ == '__main__':
             type=Path,
             default=Path('white_dwarf_expected_vs_observed.csv'),
             help='output csv path (default is %(default)s)',
+            )
+    parser.add_argument(
+            '-d',
+            '--dist',
+            type=float,
+            default=500.0,
+            help='max distance in parsec (default is %(default)s ps)',
             )
     args = parser.parse_args()
 
