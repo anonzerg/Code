@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import logging
 import argparse
+import math
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,6 @@ log = logging.getLogger(__name__)
 MASS_LIMITS: tuple[float, float] = (1.0, 8.0)      # In units of solar mass
 FIT_MAX_ITER: int = 100
 FIT_TOL: float = 1e-10
-CONFIDENCE_LEVEL: float = 0.6827                   # 1 sigma. Use 0.95 for 95%
 REQUIRED_COLS: tuple[str, ...] = (
         'turnoff_mass',
         'observed_white_dwarf_count',
@@ -101,7 +101,7 @@ def fit_observed_curve(
 
 def poisson_confidence_interval(
         counts: np.ndarray,
-        confidence_level: float = CONFIDENCE_LEVEL,
+        confidence_level: float,
         ) -> tuple[np.ndarray, np.ndarray]:
 
     tail_prob = 1 - confidence_level
@@ -116,6 +116,7 @@ def poisson_confidence_interval(
 
 def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
         table: pd.DataFrame,
+        confidence_level: float,
         title: str
         ) -> plt.Figure:
     mass_low, mass_high = MASS_LIMITS
@@ -159,7 +160,7 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
 
         log.info(f'Observed fit: ln(white dwarfs / main seq) = {intercept:.4f} + {slope:.4f} * turnoff_mass')
 
-        sigma_multiplier = stats.norm.ppf(0.5+CONFIDENCE_LEVEL / 2.0)
+        sigma_multiplier = stats.norm.ppf(0.5 + confidence_level/2.0)
         mass_grid = np.linspace(visible.turnoff_mass.min(), visible.turnoff_mass.max(), 200)
 
         grid_design_matrix = np.column_stack([np.ones_like(mass_grid), mass_grid])
@@ -190,7 +191,10 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
 
     white_dwarf_counts = clusters_with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float)
     main_seq_counts = clusters_with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float)
-    count_lower_bound, count_upper_bound = poisson_confidence_interval(white_dwarf_counts)
+    count_lower_bound, count_upper_bound = poisson_confidence_interval(
+            white_dwarf_counts,
+            confidence_level,
+            )
 
     observed_ratio = white_dwarf_counts / main_seq_counts
     ratio_lower_err = observed_ratio - count_lower_bound/main_seq_counts
@@ -233,9 +237,14 @@ def main(args: argparse.Namespace) -> None:
         log.error(f'Missing columns {missing}. Available {list(table.columns)}')
         sys.exit(1)
 
+    confidence_level = math.erf(args.sigma / math.sqrt(2))
 
     config_style(args.font_family, args.font_size)
-    fig = plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(table, title=args.title)
+    fig = plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
+            table,
+            title=args.title,
+            confidence_level=confidence_level,
+            )
 
     args.output = 'Results' / args.output
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -266,7 +275,7 @@ if __name__ == '__main__':
             help='font family name (default is %(default)s)',
             )
     parser.add_argument(
-            '-s',
+            '-z',
             '--font-size',
             type=int,
             default=16,
@@ -285,6 +294,13 @@ if __name__ == '__main__':
             type=str,
             default='title',
             help='plot title (default is %(default)s)',
+            )
+    parser.add_argument(
+            '-s',
+            '--sigma',
+            type=float,
+            default=1.0,
+            help='standard deviation sigma (default is %(default)s)',
             )
     args = parser.parse_args()
 
