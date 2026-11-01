@@ -48,7 +48,7 @@ COLS: dict[str, str] = dict(
 
 # For each segment (low, high, alpha)
 IMF_SEGMENTS: list[tuple[float, float, float]] = [
-        (0.01, 0.08, 0.3),          # Brown dwarfs (kept for IFM continuity)
+        (0.01, 0.08, 0.3),          # Brown dwarfs (kept for IMF continuity)
         (0.08, 0.50, 1.3),          # Low-mass stars
         (0.50, 100.0, 2.3),         # Intermediate-mass stars
         ]
@@ -308,7 +308,7 @@ if __name__ == '__main__':
             '--dist',
             type=float,
             default=500.0,
-            help='max distance in parsec (default is %(default)s ps)',
+            help='max distance in parsec (default is %(default)s pc)',
             )
     parser.add_argument(
             '-e',

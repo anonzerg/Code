@@ -203,7 +203,7 @@ if __name__ == '__main__':
             '--font-size',
             type=int,
             default=16,
-            help='font family size (default is %(default)s)',
+            help='font size (default is %(default)s)',
             )
     parser.add_argument(
             '-d',
