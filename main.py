@@ -273,8 +273,12 @@ def main(args: argparse.Namespace) -> None:
     results = pd.DataFrame(results)
     results['expected_ratio'] = results.expected_white_dwarf_count / results.expected_main_seq_count
     results['observed_ratio'] = results.observed_white_dwarf_count / results.observed_main_seq_count
+
+    args.output = 'Results' / args.output
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     results.to_csv(args.output, index=False)
     log.info(f'Results written to {args.output}')
+
     log.info(f'{len(results)} clusters passed the selection process.')
 
     print(
@@ -297,7 +301,7 @@ if __name__ == '__main__':
             '--output',
             type=Path,
             default=Path('white_dwarf_expected_vs_observed.csv'),
-            help='output csv path (default is %(default)s)',
+            help='output csv path (default is Results/%(default)s)',
             )
     parser.add_argument(
             '-d',
