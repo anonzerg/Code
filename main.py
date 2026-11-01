@@ -20,8 +20,6 @@ log = logging.getLogger(__name__)
 # Constants
 LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value.
-MIN_WHITE_DWARF_PROB: float = 0.75
-RUWE_CUTOFF: float = 1.4                    # Above this value the source is non-single star
 MIN_STARS_IN_TOP_THIRD: int = 3
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
@@ -182,7 +180,7 @@ def main(args: argparse.Namespace) -> None:
 
     for table, keys in [
             (clusters, ['cluster_name', 'cluster_type', 'cluster_dist', 'cluster_log_age']),
-            (members, ['member_cluster_name', 'member_gaia_id', 'member_mass']),
+            (members, ['member_cluster_name', 'member_gaia_id', 'member_mass', 'member_ruwe']),
             (white_dwarfs, ['white_dwarf_gaia_id', 'white_dwarf_prob']),
             ]:
         missing = [COLS[key] for key in keys if COLS[key] not in table.columns]
@@ -205,11 +203,11 @@ def main(args: argparse.Namespace) -> None:
 
     members = members[
             (members[COLS['member_cluster_name']].isin(clusters[COLS['cluster_name']]))
-            & (members[COLS['member_ruwe']] < RUWE_CUTOFF)
+            & (members[COLS['member_ruwe']] < args.ruwe)
             ]
 
     white_dwarf_ids = set(white_dwarfs.loc[
-        white_dwarfs[COLS['white_dwarf_prob']] > MIN_WHITE_DWARF_PROB,
+        white_dwarfs[COLS['white_dwarf_prob']] > args.prob,
         COLS['white_dwarf_gaia_id']
         ])
 
@@ -276,12 +274,20 @@ def main(args: argparse.Namespace) -> None:
     results['expected_ratio'] = results.expected_white_dwarf_count / results.expected_main_seq_count
     results['observed_ratio'] = results.observed_white_dwarf_count / results.observed_main_seq_count
     results.to_csv(args.output, index=False)
+    log.info(f'Results written to {args.output}')
+    log.info(f'{len(results)} clusters passed the selection process.')
 
-    log.info(f'{len(results)} Open Clusters have White Dwarfs.')
-    log.info(f'Expected White Dwarfs {results.expected_white_dwarf_count.sum():.0f}')
-    log.info(f'Observed White Dwarfs {results.observed_white_dwarf_count.sum():.0f}')
-    log.info(f'Expected Main Seq Stars {results.expected_main_seq_count.sum():.0f}')
-    log.info(f'Observed Main Seq Stars {results.observed_main_seq_count.sum():.0f}')
+    print(
+            f'\nExpected within {args.dist:.0f} pc:'
+            f'\n\tWhite Dwarfs {results.expected_white_dwarf_count.sum():8.0f}'
+            f'\n\tMain Seq Stars {results.expected_main_seq_count.sum():8.0f}'
+            )
+
+    print(
+            f'\nObserved within {args.dist:.0f} pc:'
+            f'\n\tWhite Dwarfs {results.observed_white_dwarf_count.sum():8.0f}'
+            f'\n\tMain Seq Stars {results.observed_main_seq_count.sum():8.0f}'
+            )
 
 
 if __name__ == '__main__':
@@ -300,6 +306,20 @@ if __name__ == '__main__':
             default=500.0,
             help='max distance in parsec (default is %(default)s ps)',
             )
+    parser.add_argument(
+            '-e',
+            '--ruwe',
+            type=float,
+            default=1.4,
+            help='renormalized unit weight error (default is %(default)s)',
+            )
+    parser.add_argument(
+            '-p',
+            '--prob',
+            type=float,
+            default=0.75,
+            help='probability being a white dwarfs (default is %(default)s)',
+            )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -310,5 +330,4 @@ if __name__ == '__main__':
     try:
         main(args)
     except KeyboardInterrupt:
-        log.error('Interrupted!')
-        sys.exit(130)
+        sys.exit('Interrupted!')
