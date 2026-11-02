@@ -268,7 +268,7 @@ if __name__ == '__main__':
             '-o',
             '--output',
             type=Path,
-            default=Path('plot.png'),
+            default=Path('plot.svg'),
             help='output plot path (default is Results/%(default)s)',
             )
     parser.add_argument(
