@@ -148,11 +148,11 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
             label='Expected Curve (Kroupa IMF)',
             )
 
-    if len(clusters_with_white_dwarfs):
+    if len(clusters_with_white_dwarfs) > 2:
         coeffs, coeffs_covariance = fit_observed_curve(
-                visible.turnoff_mass.to_numpy(dtype=float),
-                visible.observed_white_dwarf_count.to_numpy(dtype=float),
-                visible.observed_main_seq_count.to_numpy(dtype=float),
+                clusters_with_white_dwarfs.turnoff_mass.to_numpy(dtype=float),
+                clusters_with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float),
+                clusters_with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float),
                 )
 
         intercept, slope = coeffs
@@ -161,7 +161,11 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
         log.info(f'Observed fit: ln(white dwarfs / main seq) = {intercept:.4f} + {slope:.4f} * turnoff_mass')
 
         sigma_multiplier = stats.norm.ppf(0.5 + confidence_level/2.0)
-        mass_grid = np.linspace(visible.turnoff_mass.min(), visible.turnoff_mass.max(), 200)
+        mass_grid = np.linspace(
+                clusters_with_white_dwarfs.turnoff_mass.min(),
+                clusters_with_white_dwarfs.turnoff_mass.max(),
+                200
+                )
 
         grid_design_matrix = np.column_stack([np.ones_like(mass_grid), mass_grid])
         log_ratio_fit = grid_design_matrix @ coeffs
@@ -217,7 +221,7 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
     axes.set_ylabel('White Dwarfs / Main Seq')
     axes.set_title(title)
     fig.tight_layout()
-    axes.legend(frameon=False)
+    axes.legend(loc='upper right', frameon=False)
 
     return fig
 
