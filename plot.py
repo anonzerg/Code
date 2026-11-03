@@ -19,15 +19,14 @@ log = logging.getLogger(__name__)
 
 
 # Constants
-MASS_LIMITS: tuple[float, float] = (1.0, 8.0)      # In units of solar mass
+TURNOFF_MASS_LIMITS: tuple[float, float] = (1.0, 8.0)  # In units of solar mass
 FIT_MAX_ITER: int = 100
-FIT_TOL: float = 1e-10
+FIT_TOLERANCE: float = 1e-10
 REQUIRED_COLS: tuple[str, ...] = (
         'turnoff_mass',
         'observed_white_dwarf_count',
         'observed_main_seq_count',
         'expected_ratio',
-        'observed_ratio',
         )
 
 
@@ -35,22 +34,18 @@ def config_style(font_family: str, font_size: int) -> None:
     try:
         font_manager.findfont(font_family, fallback_to_default=False)
     except ValueError:
-        log.warning(
-                f'{font_family} font not found. Fallback to monospace.'
-                )
+        log.warning(f'{font_family} font not found. Fallback to `monospace`.')
         font_family = 'monospace'
 
     plt.rcParams.update({
         'font.family': font_family,
         'font.size': font_size,
-        # 'axes.spines.top': False,
-        # 'axes.spines.right': False,
         'axes.grid': True,
         'grid.alpha': 0.5,
         })
 
 
-def fit_observed_curve(
+def fit_poisson(
         turnoff_mass: np.ndarray,
         white_dwarf_counts: np.ndarray,
         main_seq_counts: np.ndarray,
@@ -58,45 +53,50 @@ def fit_observed_curve(
 
     design_matrix = np.column_stack([np.ones_like(turnoff_mass), turnoff_mass])
     log_exposure = np.log(main_seq_counts)
-    coeffs = np.array([
+    coefficients = np.array([
         np.log(white_dwarf_counts.sum()/main_seq_counts.sum()),
         0.0,
         ])
     for _ in range(FIT_MAX_ITER):
-        linear_predictor = design_matrix @ coeffs + log_exposure
+        linear_predictor = design_matrix @ coefficients + log_exposure
         predicted_count = np.exp(linear_predictor)
         working_response = (
                 (linear_predictor-log_exposure)
                 + (white_dwarf_counts-predicted_count) / predicted_count
                 )
         weighted_design = design_matrix * predicted_count[:, None]
-        updated_coeffs = np.linalg.solve(
+        updated_coefficients = np.linalg.solve(
                 design_matrix.T @ weighted_design,
                 weighted_design.T @ working_response,
                 )
-        converged = np.allclose(updated_coeffs, coeffs, rtol=0, atol=FIT_TOL)
-        coeffs = updated_coeffs
+        converged = np.allclose(
+                updated_coefficients,
+                coefficients,
+                rtol=0,
+                atol=FIT_TOLERANCE
+                )
+        coefficients = updated_coefficients
         if converged:
             break
     else:
         log.warning('Fit did not converge.')
 
-    predicted_count = np.exp(design_matrix @ coeffs+log_exposure)
+    predicted_count = np.exp(design_matrix @ coefficients+log_exposure)
     fisher_info = design_matrix.T @ (design_matrix * predicted_count[:, None])
-    coeffs_covariance = np.linalg.inv(fisher_info)
+    covariance = np.linalg.inv(fisher_info)
 
-    degree_of_freedom = len(white_dwarf_counts) - 2
+    degrees_of_freedom = len(white_dwarf_counts) - 2
     pearson_chi_squared = np.sum(
             (white_dwarf_counts - predicted_count)**2 / predicted_count
             )
-    if degree_of_freedom > 0:
-        dispersion = max(1.0, pearson_chi_squared / degree_of_freedom)
+    if degrees_of_freedom > 0:
+        dispersion = max(1.0, pearson_chi_squared / degrees_of_freedom)
     else:
         dispersion = 1.0
 
     log.info(f'Dispersion {dispersion:.2f}')
 
-    return coeffs, coeffs_covariance * dispersion
+    return coefficients, covariance * dispersion
 
 
 def poisson_confidence_interval(
@@ -114,33 +114,32 @@ def poisson_confidence_interval(
     return lower_bound, upper_bound
 
 
-def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
-        table: pd.DataFrame,
+def plot_ratio_vs_turnoff_mass(
+        clusters: pd.DataFrame,
         confidence_level: float,
         title: str
         ) -> plt.Figure:
-    mass_low, mass_high = MASS_LIMITS
-    visible = table[table.turnoff_mass.between(mass_low, mass_high)]
-    hidden = len(table) - len(visible)
+    mass_min, mass_max = TURNOFF_MASS_LIMITS
+    visible = clusters[clusters.turnoff_mass.between(mass_min, mass_max)]
+    hidden = len(clusters) - len(visible)
     if hidden:
-        log.info(
-                f'{hidden} clusters out of mass range. ({mass_low}, {mass_high})'
-                )
+        log.info(f'{hidden} clusters out of mass range.')
+        log.info(f'Mass range is ({mass_min}, {mass_max})')
 
     expected = visible.sort_values('turnoff_mass')
-    clusters_with_white_dwarfs = visible[
+    with_white_dwarfs = visible[
             visible.observed_white_dwarf_count > 0
             ]
-    clusters_without_white_dwarfs = visible[
+    without_white_dwarfs = visible[
             visible.observed_white_dwarf_count == 0
             ]
     log.info(
-            f'{len(clusters_without_white_dwarfs)} clusters do not contain white dwarfs'
+            f'{len(without_white_dwarfs)} clusters do not contain white dwarfs'
             )
 
-    fig, axes = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(8, 8))
 
-    axes.plot(
+    ax.plot(
             expected.turnoff_mass,
             expected.expected_ratio,
             color='black',
@@ -148,80 +147,83 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
             label='Expected Curve (Kroupa IMF)',
             )
 
-    if len(clusters_with_white_dwarfs) > 2:
-        coeffs, coeffs_covariance = fit_observed_curve(
-                clusters_with_white_dwarfs.turnoff_mass.to_numpy(dtype=float),
-                clusters_with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float),
-                clusters_with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float),
+    if len(with_white_dwarfs) > 2:
+        coefficients, covariance = fit_poisson(
+                with_white_dwarfs.turnoff_mass.to_numpy(dtype=float),
+                with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float),
+                with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float),
                 )
 
-        intercept, slope = coeffs
-        slope_std_err = np.sqrt(coeffs_covariance[1, 1])
+        intercept, slope = coefficients
+        slope_std_err = np.sqrt(covariance[1, 1])
 
-        log.info(f'Observed fit: ln(white dwarfs / main seq) = {intercept:.4f} + {slope:.4f} * turnoff_mass')
+        log.info(
+                'Observed fit: ln(white dwarfs / main seq) = '
+                f'{intercept:.4f} + {slope:.4f} * turnoff_mass'
+                )
 
-        sigma_multiplier = stats.norm.ppf(0.5 + confidence_level/2.0)
+        z_score = stats.norm.ppf(0.5 + confidence_level/2.0)
         mass_grid = np.linspace(
-                clusters_with_white_dwarfs.turnoff_mass.min(),
-                clusters_with_white_dwarfs.turnoff_mass.max(),
+                with_white_dwarfs.turnoff_mass.min(),
+                with_white_dwarfs.turnoff_mass.max(),
                 200
                 )
 
         grid_design_matrix = np.column_stack([np.ones_like(mass_grid), mass_grid])
-        log_ratio_fit = grid_design_matrix @ coeffs
+        log_ratio_fit = grid_design_matrix @ coefficients
         log_ratio_fit_std_err = np.sqrt(
                 np.einsum(
                     'ij,jk,ik->i',
                     grid_design_matrix,
-                    coeffs_covariance,
+                    covariance,
                     grid_design_matrix,
                     )
                 )
 
-        axes.plot(
+        ax.plot(
                 mass_grid,
                 np.exp(log_ratio_fit),
                 color='red',
                 label='Observed (Fitted curve)',
                 )
-        axes.fill_between(
+        ax.fill_between(
                 mass_grid,
-                np.exp(log_ratio_fit - log_ratio_fit_std_err*sigma_multiplier),
-                np.exp(log_ratio_fit + log_ratio_fit_std_err*sigma_multiplier),
+                np.exp(log_ratio_fit - log_ratio_fit_std_err*z_score),
+                np.exp(log_ratio_fit + log_ratio_fit_std_err*z_score),
                 color='red',
                 alpha=0.2,
                 linewidth=0.0,
                 )
 
-    white_dwarf_counts = clusters_with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float)
-    main_seq_counts = clusters_with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float)
-    count_lower_bound, count_upper_bound = poisson_confidence_interval(
+    white_dwarf_counts = with_white_dwarfs.observed_white_dwarf_count.to_numpy(dtype=float)
+    main_seq_counts = with_white_dwarfs.observed_main_seq_count.to_numpy(dtype=float)
+    count_lower, count_upper = poisson_confidence_interval(
             white_dwarf_counts,
             confidence_level,
             )
 
     observed_ratio = white_dwarf_counts / main_seq_counts
-    ratio_lower_err = observed_ratio - count_lower_bound/main_seq_counts
-    ratio_upper_err = count_upper_bound/main_seq_counts - observed_ratio
+    ratio_lower = observed_ratio - count_lower/main_seq_counts
+    ratio_upper = count_upper/main_seq_counts - observed_ratio
 
-    axes.errorbar(
-            clusters_with_white_dwarfs.turnoff_mass,
+    ax.errorbar(
+            with_white_dwarfs.turnoff_mass,
             observed_ratio,
-            yerr=[ratio_lower_err, ratio_upper_err],
+            yerr=[ratio_lower, ratio_upper],
             fmt='o',
             color='orange',
             markeredgecolor='gray',
             ecolor='gray',
             capsize=4.0,
-            label=f'Observed {len(clusters_with_white_dwarfs)} clusters',
+            label=f'Observed {len(with_white_dwarfs)} clusters',
             )
 
-    axes.set_xlim(mass_low, mass_high)
-    axes.set_xlabel('Turnoff Mass')
-    axes.set_ylabel('White Dwarfs / Main Seq')
-    axes.set_title(title)
+    ax.set_xlim(mass_min, mass_max)
+    ax.set_xlabel('Turnoff Mass')
+    ax.set_ylabel('White Dwarfs / Main Seq')
+    ax.set_title(title)
     fig.tight_layout()
-    axes.legend(loc='upper right', frameon=False)
+    ax.legend(loc='upper right', frameon=False)
 
     return fig
 
@@ -229,23 +231,24 @@ def plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
 
 def main(args: argparse.Namespace) -> None:
     try:
-        table = pd.read_csv(args.input)
+        clusters = pd.read_csv(args.input)
     except FileNotFoundError as e:
         log.error(e)
         sys.exit(1)
 
     missing = [
-            name for name in REQUIRED_COLS if name not in table.columns
+            col for col in REQUIRED_COLS if col not in clusters.columns
             ]
     if missing:
-        log.error(f'Missing columns {missing}. Available {list(table.columns)}')
+        log.error(f'Missing columns {missing}.')
+        log.info(f'Available {list(clusters.columns)}')
         sys.exit(1)
 
     confidence_level = math.erf(args.sigma / math.sqrt(2))
 
     config_style(args.font_family, args.font_size)
-    fig = plot_white_dwarf_main_seq_ratio_vs_turnoff_mass(
-            table,
+    fig = plot_ratio_vs_turnoff_mass(
+            clusters,
             title=args.title,
             confidence_level=confidence_level,
             )
@@ -269,14 +272,14 @@ if __name__ == '__main__':
             '--output',
             type=Path,
             default=Path('plot.svg'),
-            help='output plot path (default is Results/%(default)s)',
+            help='output file name inside Results/, (default is %(default)s)',
             )
     parser.add_argument(
             '-f',
             '--font-family',
             type=str,
             default='Iosevka',
-            help='font family name (default is %(default)s)',
+            help='font family name, falls back to monospace if not found (default is %(default)s)',
             )
     parser.add_argument(
             '-z',
@@ -304,7 +307,7 @@ if __name__ == '__main__':
             '--sigma',
             type=float,
             default=1.0,
-            help='standard deviation sigma (default is %(default)s)',
+            help='confidence level in standard deviations, used for error bars and fit band (default is %(default)s)',
             )
     args = parser.parse_args()
 
