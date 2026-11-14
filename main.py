@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import sys
-import sqlite3
 import logging
 import argparse
 from pathlib import Path
-from contextlib import closing
 
 import ezpadova
 import numpy as np
@@ -20,35 +18,38 @@ log = logging.getLogger(__name__)
 
 
 # Constants
-LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
+LOWEST_MAIN_SEQ_MASS: float = 0.08          # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value.
 MIN_STARS_IN_TOP_THIRD: int = 10
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
 ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
 PARSEC_TRACK: str = 'parsec_CAF09_v1.2S'
-ISOCHRONE_CACHE: Path = Path('./Tables/isochrones.parquet')
 
-COLS: dict[str, str] = dict(
+CLUSTER_COLS: dict[str, str] = {
         # Hunt & Reffert 2024 clusters data.
-        cluster_name='Name',
-        cluster_type='Type',
-        cluster_dist='dist50',
-        cluster_log_age='logAge50',
+        'Name': 'cluster_name',
+        'Type': 'cluster_type',
+        'dist50': 'dist',
+        'logAge50': 'log_age',
+        }
 
+MEMBER_COLS: dict[str, str] = {
         # Hunt & Reffert 2024 members data.
-        member_cluster_name='Name',
-        member_gaia_id='GaiaDR3',
-        member_mass='Mass50',
-        member_ruwe='RUWE',
+        'Name': 'cluster_name',
+        'GaiaDR3': 'gaia_id',
+        'Mass50': 'mass',
+        'RUWE': 'ruwe',
+        }
 
+WHITE_DWARF_COLS: dict[str, str] = {
         # Gentile Fusillo et. al. 2021 white dwarfs data.
-        white_dwarf_gaia_id='GaiaEDR3',
-        white_dwarf_prob='Pwd',
-        )
+        'GaiaEDR3': 'gaia_id',
+        'Pwd': 'prob',
+        }
 
 
-def load_table(path: str | Path) -> pd.DataFrame:
+def load_table(path: str | Path, columns: dict[str, str]) -> pd.DataFrame:
     if not isinstance(path, Path):
         path = Path(path)
 
@@ -58,38 +59,36 @@ def load_table(path: str | Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
 
     if suffix == '.parquet':
-        return pd.read_parquet(path)
-
-    elif suffix in ('.sqlite', '.sqlite3', '.db', '.db3'):
-        with closing(sqlite3.connect(path)) as con:
-            tables = [row[0] for row in con.execute(
-                'SELECT name FROM sqlite_master WHERE type=\'table\''
-                )]
-            if path.stem in tables:
-                table = path.stem
-            elif len(tables) == 1:
-                table = tables[0]
-            else:
-                raise ValueError(f'Cannot pick a table in {path}. Found {tables}')
-
-            return pd.read_sql(f'SELECT * FROM {table}', con)
+        table = pd.read_parquet(path)
+        missing = [col for col in columns if col not in table.columns]
+        if missing:
+            raise ValueError(
+                    f'Missing columns {missing}\n'
+                    f'Path is {path}\n'
+                    f'Available {list(table.columns)}'
+                    )
 
     else:
         raise ValueError(f'{suffix} files are not supported.')
 
+    return table[list(columns)].rename(columns=columns)
 
-def load_isochrones() -> pd.DataFrame:
-    if ISOCHRONE_CACHE.exists():
-        log.info(f'Isochrones already cached. using {ISOCHRONE_CACHE}')
-        return pd.read_parquet(ISOCHRONE_CACHE)
+
+def load_isochrones(path: str | Path) -> pd.DataFrame:
+    if not isinstance(path, Path):
+        path = Path(path)
+
+    if path.exists():
+        log.info(f'Isochrones already cached. using {path}')
+        return pd.read_parquet(path)
 
     isochrones = ezpadova.get_isochrones(
             logage=ISOCHRONE_LOG_AGE,
             Z=ISOCHRONE_Z,
             track_parsec=PARSEC_TRACK,
             )
-    ISOCHRONE_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    isochrones.to_parquet(ISOCHRONE_CACHE, index=False)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    isochrones.to_parquet(path, index=False)
     return isochrones
 
 
@@ -119,25 +118,23 @@ def select_calibration_stars(
     if top_third < MIN_STARS_IN_TOP_THIRD:
         return None
 
-    faintest_top_third_mass = main_seq_masses[top_third - 1]
+    calibration_min_mass = main_seq_masses[top_third - 1]
 
-    return main_seq_masses, faintest_top_third_mass
+    return main_seq_masses, calibration_min_mass
 
 
-def estimate_white_dwarfs_main_seq(
+def counts_from_imf(
         main_seq_masses: np.ndarray,
-        faintest_top_third_mass: float,
+        calibration_min_mass: float,
         turnoff_mass: float,
         white_dwarf_prog_mass: float,
         imf: InitialMassFunction,
         ) -> dict[str, float]:
 
-    stars_in_calibrated_range = int(
-            (main_seq_masses >= faintest_top_third_mass).sum()
-            )
-    imf_scale = stars_in_calibrated_range / imf.count_stars_in_mass_range(
-            faintest_top_third_mass,
-            turnoff_mass
+    calibration_stars = int((main_seq_masses >= calibration_min_mass).sum())
+    imf_scale = calibration_stars / imf.count_stars_in_mass_range(
+            calibration_min_mass,
+            turnoff_mass,
             )
 
     return dict(
@@ -146,70 +143,62 @@ def estimate_white_dwarfs_main_seq(
                 MAX_WHITE_DWARF_PROG_MASS,
                 ),
             expected_main_seq_count = imf_scale * imf.count_stars_in_mass_range(
-                LOWEST_MS_MASS,
+                LOWEST_MAIN_SEQ_MASS,
                 turnoff_mass
                 ),
-            observed_main_seq_count = len(main_seq_masses),
             )
 
 
 def main(args: argparse.Namespace) -> None:
     try:
-        clusters = load_table('./Tables/clusters.parquet')
-        members = load_table('./Tables/members.parquet')
-        white_dwarfs = load_table('./Tables/maincat.parquet')
-        isochrones = load_isochrones()
-    except Exception as e:
-        log.exception(e)
+        clusters = load_table('./Tables/clusters.parquet', CLUSTER_COLS)
+        members = load_table('./Tables/members.parquet', MEMBER_COLS)
+        white_dwarfs = load_table('./Tables/maincat.parquet', WHITE_DWARF_COLS)
+        isochrones = load_isochrones('./Tables/isochrones.parquet')
+    except Exception:
+        log.exception('Could not load input tables.')
         sys.exit(1)
 
-    for table, keys in [
-            (clusters, ['cluster_name', 'cluster_type', 'cluster_dist', 'cluster_log_age']),
-            (members, ['member_cluster_name', 'member_gaia_id', 'member_mass', 'member_ruwe']),
-            (white_dwarfs, ['white_dwarf_gaia_id', 'white_dwarf_prob']),
-            ]:
-        missing = [COLS[key] for key in keys if COLS[key] not in table.columns]
-
-        if missing:
-            log.error(f'Missing columns {missing}. Available {list(table.columns)}')
-            sys.exit(1)
-
-    missing = [name for name in ('logAge', 'Mini', 'label') if name not in isochrones.columns]
+    missing = [col for col in ('logAge', 'Mini', 'label') if col not in isochrones.columns]
     if missing:
-        log.error(f'Missing isochrone columns {missing}. Available {list(isochrones.columns)}')
+        log.error(
+                f'Missing isochrone columns {missing}\n'
+                f'Available {list(isochrones.columns)}'
+                )
         sys.exit(1)
 
     mass_table = build_mass_table(isochrones).dropna().reset_index(drop=True)
+    log_age_low = mass_table.log_age.iloc[0]
+    log_age_high = mass_table.log_age.iloc[-1]
 
     clusters = clusters[
-            (clusters[COLS['cluster_type']] == 'o')
-            & (clusters[COLS['cluster_dist']] < args.dist)
+            (clusters.cluster_type == 'o')
+            & (clusters.dist < args.dist)
             ]
 
     members = members[
-            (members[COLS['member_cluster_name']].isin(clusters[COLS['cluster_name']]))
-            & (members[COLS['member_ruwe']] < args.ruwe)
+            (members.cluster_name.isin(clusters.cluster_name))
+            & (members.ruwe < args.ruwe)
             ]
 
-    white_dwarf_ids = set(white_dwarfs.loc[
-        white_dwarfs[COLS['white_dwarf_prob']] > args.prob,
-        COLS['white_dwarf_gaia_id']
-        ])
+    white_dwarf_ids = set(
+            white_dwarfs.gaia_id[white_dwarfs.prob > args.prob]
+            )
 
     members = members.assign(
-            is_white_dwarf = members[COLS['member_gaia_id']].isin(white_dwarf_ids)
+            is_white_dwarf = members.gaia_id.isin(white_dwarf_ids)
             )
 
     if not members.is_white_dwarf.any():
-        log.warning('No cluster member matched the White Dwarfs catalog. Check Gaia ID dtypes.')
+        log.warning(
+                'No cluster member matched the White Dwarfs catalog.\n'
+                'Check Gaia ID dtypes.'
+                )
 
-    members_by_cluster = dict(tuple(members.groupby(COLS['member_cluster_name'])))
+    members_by_cluster = dict(tuple(members.groupby('cluster_name')))
 
     results = []
-    log_age_grid_low = mass_table.log_age.iloc[0]
-    log_age_grid_high = mass_table.log_age.iloc[-1]
-
-    for cluster_name, log_age in zip(clusters[COLS['cluster_name']], clusters[COLS['cluster_log_age']]):
+    for cluster_name, log_age in zip(clusters.cluster_name, clusters.log_age):
         if cluster_name not in members_by_cluster:
             continue
 
@@ -217,7 +206,7 @@ def main(args: argparse.Namespace) -> None:
             log.warning(f'Skipping {cluster_name}. Missing logAge.')
             continue
 
-        if not log_age_grid_low <= log_age <= log_age_grid_high:
+        if not log_age_low <= log_age <= log_age_high:
             log.warning(f'Skipping {cluster_name}. {log_age} outside isochrone grid.')
             continue
 
@@ -235,7 +224,7 @@ def main(args: argparse.Namespace) -> None:
                 )
         
         calibration = select_calibration_stars(
-                cluster_members[COLS['member_mass']].dropna().to_numpy(),
+                cluster_members.mass.dropna().to_numpy(),
                 turnoff_mass,
                 )
 
@@ -243,13 +232,13 @@ def main(args: argparse.Namespace) -> None:
             log.info(f'Skipping {cluster_name}. Too few calibration stars.')
             continue
 
-        main_seq_masses, faintest_top_third_mass = calibration
+        main_seq_masses, calibration_min_mass = calibration
         observed_white_dwarf_count = int(cluster_members.is_white_dwarf.sum())
 
         for imf in MODELS.values():
-            expected_counts = estimate_white_dwarfs_main_seq(
+            expected_counts = counts_from_imf(
                     main_seq_masses,
-                    faintest_top_third_mass,
+                    calibration_min_mass,
                     turnoff_mass,
                     white_dwarf_prog_mass,
                     imf,
@@ -261,6 +250,7 @@ def main(args: argparse.Namespace) -> None:
                 turnoff_mass=turnoff_mass,
                 white_dwarf_prog_mass=white_dwarf_prog_mass,
                 observed_white_dwarf_count=observed_white_dwarf_count,
+                observed_main_seq_count=len(main_seq_masses),
                 **expected_counts,
                 ))
 
@@ -272,10 +262,10 @@ def main(args: argparse.Namespace) -> None:
     results['expected_ratio'] = results.expected_white_dwarf_count / results.expected_main_seq_count
     results['observed_ratio'] = results.observed_white_dwarf_count / results.observed_main_seq_count
 
-    args.output = 'Results' / args.output
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    results.to_csv(args.output, index=False)
-    log.info(f'Results written to {args.output}')
+    output = Path('Results') / args.output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    results.to_csv(output, index=False)
+    log.info(f'Results written to {output}')
 
     log.info(f'{results.cluster_name.nunique()} clusters passed the selection process.')
 

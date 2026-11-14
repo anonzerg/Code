@@ -34,7 +34,7 @@ REQUIRED_COLS: tuple[str, ...] = (
 COLORS: tuple[str, ...] = (
         'blue',
         'green',
-        'yellow',
+        'black',
         'cyan',
         'magenta',
         )
@@ -142,12 +142,6 @@ def plot_ratio_vs_turnoff_mass(
     with_white_dwarfs = observed_clusters[
             observed_clusters.observed_white_dwarf_count > 0
             ]
-    without_white_dwarfs = observed_clusters[
-            observed_clusters.observed_white_dwarf_count == 0
-            ]
-    log.info(
-            f'{len(without_white_dwarfs)} clusters do not contain white dwarfs'
-            )
 
     fig, ax = plt.subplots(figsize=(8, 8))
 
@@ -160,8 +154,8 @@ def plot_ratio_vs_turnoff_mass(
                 imf_results.turnoff_mass,
                 imf_results.expected_ratio,
                 color=color,
-                linestyle='-',
-                linewidth=1.0,
+                linestyle=(0, (5, 5)),
+                linewidth=1.5,
                 label=imf_name,
                 )
 
@@ -173,7 +167,6 @@ def plot_ratio_vs_turnoff_mass(
                 )
 
         intercept, slope = coefficients
-        slope_std_err = np.sqrt(covariance[1, 1])
 
         log.info(
                 'Observed fit: ln(white dwarfs / main seq) = '
@@ -271,9 +264,9 @@ def main(args: argparse.Namespace) -> None:
             confidence_level=confidence_level,
             )
 
-    args.output = 'Results' / args.output
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=args.dpi)
+    output = Path('Results') / args.output
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=args.dpi)
     
     log.info(f'Plot created at {args.output}')
 
