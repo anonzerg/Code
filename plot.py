@@ -23,10 +23,20 @@ TURNOFF_MASS_LIMITS: tuple[float, float] = (1.0, 8.0)  # In units of solar mass
 FIT_MAX_ITER: int = 100
 FIT_TOLERANCE: float = 1e-10
 REQUIRED_COLS: tuple[str, ...] = (
+        'imf_name',
+        'cluster_name',
         'turnoff_mass',
         'observed_white_dwarf_count',
         'observed_main_seq_count',
         'expected_ratio',
+        'expected_white_dwarf_count',
+        )
+COLORS: tuple[str, ...] = (
+        'blue',
+        'green',
+        'yellow',
+        'cyan',
+        'magenta',
         )
 
 
@@ -120,18 +130,20 @@ def plot_ratio_vs_turnoff_mass(
         title: str
         ) -> plt.Figure:
     mass_min, mass_max = TURNOFF_MASS_LIMITS
+
     visible = clusters[clusters.turnoff_mass.between(mass_min, mass_max)]
-    hidden = len(clusters) - len(visible)
+    observed_clusters = visible.drop_duplicates('cluster_name')
+
+    hidden = clusters.cluster_name.nunique() - len(observed_clusters)
     if hidden:
         log.info(f'{hidden} clusters out of mass range.')
         log.info(f'Mass range is ({mass_min}, {mass_max})')
 
-    expected = visible.sort_values('turnoff_mass')
-    with_white_dwarfs = visible[
-            visible.observed_white_dwarf_count > 0
+    with_white_dwarfs = observed_clusters[
+            observed_clusters.observed_white_dwarf_count > 0
             ]
-    without_white_dwarfs = visible[
-            visible.observed_white_dwarf_count == 0
+    without_white_dwarfs = observed_clusters[
+            observed_clusters.observed_white_dwarf_count == 0
             ]
     log.info(
             f'{len(without_white_dwarfs)} clusters do not contain white dwarfs'
@@ -139,13 +151,19 @@ def plot_ratio_vs_turnoff_mass(
 
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    ax.plot(
-            expected.turnoff_mass,
-            expected.expected_ratio,
-            color='black',
-            linestyle='--',
-            label='Expected Curve (Kroupa IMF)',
-            )
+    for color, (imf_name, imf_results) in zip(
+            COLORS,
+            visible.groupby('imf_name', sort=False),
+            ):
+        imf_results = imf_results.sort_values('turnoff_mass')
+        ax.plot(
+                imf_results.turnoff_mass,
+                imf_results.expected_ratio,
+                color=color,
+                linestyle='-',
+                linewidth=1.0,
+                label=imf_name,
+                )
 
     if len(with_white_dwarfs) > 2:
         coefficients, covariance = fit_poisson(

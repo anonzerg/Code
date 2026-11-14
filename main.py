@@ -13,6 +13,8 @@ import ezpadova
 import numpy as np
 import pandas as pd
 
+from imf import InitialMassFunction, MODELS
+
 
 log = logging.getLogger(__name__)
 
@@ -20,13 +22,12 @@ log = logging.getLogger(__name__)
 # Constants
 LOWEST_MS_MASS: float = 0.08                # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value.
-MIN_STARS_IN_TOP_THIRD: int = 3
+MIN_STARS_IN_TOP_THIRD: int = 10
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
 ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
 PARSEC_TRACK: str = 'parsec_CAF09_v1.2S'
 ISOCHRONE_CACHE: Path = Path('./Tables/isochrones.parquet')
-
 
 COLS: dict[str, str] = dict(
         # Hunt & Reffert 2024 clusters data.
@@ -46,33 +47,6 @@ COLS: dict[str, str] = dict(
         white_dwarf_prob='Pwd',
         )
 
-# For each segment (low, high, alpha)
-IMF_SEGMENTS: list[tuple[float, float, float]] = [
-        (0.01, 0.08, 0.3),          # Brown dwarfs (kept for IMF continuity)
-        (0.08, 0.50, 1.3),          # Low-mass stars
-        (0.50, 100.0, 2.3),         # Intermediate-mass stars
-        ]
-
-IMF_AMPS: list[float] = [1.0]
-for (_, _, previous_alpha), (mass_break, _, alpha) in zip(IMF_SEGMENTS[:-1], IMF_SEGMENTS[1:]):
-    IMF_AMPS.append(IMF_AMPS[-1] * mass_break**(alpha-previous_alpha))
-
-
-def count_stars_in_mass_range(mass_low: float, mass_high: float) -> float:
-    if mass_high < mass_low:
-        return 0.0
-
-    total = 0.0
-    for amplitude, (segment_low, segment_high, alpha) in zip(IMF_AMPS, IMF_SEGMENTS):
-        overlap_low = max(mass_low, segment_low)
-        overlap_high = min(mass_high, segment_high)
-
-        if overlap_high > overlap_low:
-            beta = 1.0 - alpha
-            total += (amplitude/beta) * (overlap_high**beta - overlap_low**beta)
-
-    return total
-        
 
 def load_table(path: str | Path) -> pd.DataFrame:
     if not isinstance(path, Path):
@@ -134,33 +108,44 @@ def build_mass_table(isochrones: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values('log_age').reset_index(drop=True)
 
 
-def estimate_white_dwarfs_main_seq(
-        member_masses: np.ndarray,
+def select_calibration_stars(
+        masses: np.ndarray,
         turnoff_mass: float,
-        white_dwarf_prog_mass: float,
-        ) -> dict[str, float] | None:
+        ) -> tuple[np.ndarray, float] | None:
 
-    main_seq_masses = np.sort(member_masses[member_masses < turnoff_mass])[::-1]
+    main_seq_masses = np.sort(masses[masses < turnoff_mass])[::-1]
 
     top_third = len(main_seq_masses) // 3
     if top_third < MIN_STARS_IN_TOP_THIRD:
         return None
 
     faintest_top_third_mass = main_seq_masses[top_third - 1]
+
+    return main_seq_masses, faintest_top_third_mass
+
+
+def estimate_white_dwarfs_main_seq(
+        main_seq_masses: np.ndarray,
+        faintest_top_third_mass: float,
+        turnoff_mass: float,
+        white_dwarf_prog_mass: float,
+        imf: InitialMassFunction,
+        ) -> dict[str, float]:
+
     stars_in_calibrated_range = int(
             (main_seq_masses >= faintest_top_third_mass).sum()
             )
-    imf_scale = stars_in_calibrated_range / count_stars_in_mass_range(
+    imf_scale = stars_in_calibrated_range / imf.count_stars_in_mass_range(
             faintest_top_third_mass,
             turnoff_mass
             )
 
     return dict(
-            expected_white_dwarf_count = imf_scale * count_stars_in_mass_range(
+            expected_white_dwarf_count = imf_scale * imf.count_stars_in_mass_range(
                 white_dwarf_prog_mass,
                 MAX_WHITE_DWARF_PROG_MASS,
                 ),
-            expected_main_seq_count = imf_scale * count_stars_in_mass_range(
+            expected_main_seq_count = imf_scale * imf.count_stars_in_mass_range(
                 LOWEST_MS_MASS,
                 turnoff_mass
                 ),
@@ -249,22 +234,35 @@ def main(args: argparse.Namespace) -> None:
                 mass_table.white_dwarf_prog_mass,
                 )
         
-        expected_counts = estimate_white_dwarfs_main_seq(
+        calibration = select_calibration_stars(
                 cluster_members[COLS['member_mass']].dropna().to_numpy(),
                 turnoff_mass,
-                white_dwarf_prog_mass
                 )
-        if expected_counts is None:
+
+        if calibration is None:
             log.info(f'Skipping {cluster_name}. Too few calibration stars.')
             continue
 
-        results.append(dict(
-            cluster_name=cluster_name,
-            turnoff_mass=turnoff_mass,
-            white_dwarf_prog_mass=white_dwarf_prog_mass,
-            observed_white_dwarf_count=int(cluster_members.is_white_dwarf.sum()),
-            **expected_counts,
-            ))
+        main_seq_masses, faintest_top_third_mass = calibration
+        observed_white_dwarf_count = int(cluster_members.is_white_dwarf.sum())
+
+        for imf in MODELS.values():
+            expected_counts = estimate_white_dwarfs_main_seq(
+                    main_seq_masses,
+                    faintest_top_third_mass,
+                    turnoff_mass,
+                    white_dwarf_prog_mass,
+                    imf,
+                    )
+        
+            results.append(dict(
+                imf_name=imf.name,
+                cluster_name=cluster_name,
+                turnoff_mass=turnoff_mass,
+                white_dwarf_prog_mass=white_dwarf_prog_mass,
+                observed_white_dwarf_count=observed_white_dwarf_count,
+                **expected_counts,
+                ))
 
     if not results:
         log.error('No cluster passed the selection process.')
@@ -279,19 +277,7 @@ def main(args: argparse.Namespace) -> None:
     results.to_csv(args.output, index=False)
     log.info(f'Results written to {args.output}')
 
-    log.info(f'{len(results)} clusters passed the selection process.')
-
-    print(
-            f'\nExpected within {args.dist:.0f} pc:'
-            f'\n\tWhite Dwarfs {results.expected_white_dwarf_count.sum():8.0f}'
-            f'\n\tMain Seq Stars {results.expected_main_seq_count.sum():8.0f}'
-            )
-
-    print(
-            f'\nObserved within {args.dist:.0f} pc:'
-            f'\n\tWhite Dwarfs {results.observed_white_dwarf_count.sum():8.0f}'
-            f'\n\tMain Seq Stars {results.observed_main_seq_count.sum():8.0f}'
-            )
+    log.info(f'{results.cluster_name.nunique()} clusters passed the selection process.')
 
 
 if __name__ == '__main__':
