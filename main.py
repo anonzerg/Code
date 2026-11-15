@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 LOWEST_MAIN_SEQ_MASS: float = 0.08          # In units of solar mass.
 MAX_WHITE_DWARF_PROG_MASS: float = 8.0      # Use `12.0` for loose max value.
 MIN_STARS_IN_TOP_THIRD: int = 10
+MAX_CLUSTER_DISTANCE: float = 1000.0        # In parsec.
 MAX_MAIN_SEQ_PARSEC_LABEL: int = 1          # PARSEC label: 0 = pre-MS, 1 = MS, ...
 ISOCHRONE_LOG_AGE: tuple[float, float, float] = (6.4, 10.1, 0.05)
 ISOCHRONE_Z: tuple[float, float, float] = (0.015, 0.015, 0.0)
@@ -171,10 +172,21 @@ def main(args: argparse.Namespace) -> None:
     log_age_low = mass_table.log_age.iloc[0]
     log_age_high = mass_table.log_age.iloc[-1]
 
+    dist = args.dist
+    if not 0.0 < dist < MAX_CLUSTER_DISTANCE:
+        log.error(
+                f'Distance must be between 0 and {MAX_CLUSTER_DISTANCE} pc.\n'
+                f'Got {dist}.'
+                )
+        sys.exit(1)
+
     clusters = clusters[
             (clusters.cluster_type == 'o')
-            & (clusters.dist < args.dist)
+            & (clusters.dist <= MAX_CLUSTER_DISTANCE)
             ]
+    clusters = clusters.assign(
+            population = np.where(clusters.dist <= dist, 'near', 'far')
+            )
 
     members = members[
             (members.cluster_name.isin(clusters.cluster_name))
@@ -198,7 +210,10 @@ def main(args: argparse.Namespace) -> None:
     members_by_cluster = dict(tuple(members.groupby('cluster_name')))
 
     results = []
-    for cluster_name, log_age in zip(clusters.cluster_name, clusters.log_age):
+    for cluster in clusters.itertuples():
+        cluster_name = cluster.cluster_name
+        log_age = cluster.log_age
+
         if cluster_name not in members_by_cluster:
             continue
 
@@ -247,6 +262,8 @@ def main(args: argparse.Namespace) -> None:
             results.append(dict(
                 imf_name=imf.name,
                 cluster_name=cluster_name,
+                population=cluster.population,
+                distance=cluster.dist,
                 turnoff_mass=turnoff_mass,
                 white_dwarf_prog_mass=white_dwarf_prog_mass,
                 observed_white_dwarf_count=observed_white_dwarf_count,
@@ -267,7 +284,9 @@ def main(args: argparse.Namespace) -> None:
     results.to_csv(output, index=False)
     log.info(f'Results written to {output}')
 
-    log.info(f'{results.cluster_name.nunique()} clusters passed the selection process.')
+    cluster_per_pop = results.groupby('population').cluster_name.nunique()
+    for population, cluster_count in cluster_per_pop.items():
+        log.info(f'{cluster_count} {population} clusters passed the selection process.')
 
 
 if __name__ == '__main__':
@@ -283,8 +302,8 @@ if __name__ == '__main__':
             '-d',
             '--dist',
             type=float,
-            default=500.0,
-            help='max distance in parsec (default is %(default)s pc)',
+            default=400.0,
+            help='Separate clusters into two populations based on dist (default is %(default)s pc)',
             )
     parser.add_argument(
             '-e',

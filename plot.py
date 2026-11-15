@@ -22,9 +22,11 @@ log = logging.getLogger(__name__)
 TURNOFF_MASS_LIMITS: tuple[float, float] = (1.0, 8.0)  # In units of solar mass
 FIT_MAX_ITER: int = 100
 FIT_TOLERANCE: float = 1e-10
+POPULATIONS: tuple[str, ...] = ('near', 'far')
 REQUIRED_COLS: tuple[str, ...] = (
         'imf_name',
         'cluster_name',
+        'population',
         'turnoff_mass',
         'observed_white_dwarf_count',
         'observed_main_seq_count',
@@ -258,17 +260,28 @@ def main(args: argparse.Namespace) -> None:
     confidence_level = math.erf(args.sigma / math.sqrt(2))
 
     config_style(args.font_family, args.font_size)
-    fig = plot_ratio_vs_turnoff_mass(
-            clusters,
-            title=args.title,
-            confidence_level=confidence_level,
-            )
 
-    output = Path('Results') / args.output
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=args.dpi)
-    
-    log.info(f'Plot created at {args.output}')
+    for pop in POPULATIONS:
+        cluster_pops = clusters[clusters.population == pop]
+
+        if cluster_pops.empty:
+            log.warning(f'No {pop} clusters. Skipping.')
+            continue
+
+        log.info(f'Plotting {pop} clusters.')
+        fig = plot_ratio_vs_turnoff_mass(
+                cluster_pops,
+                title=f'{args.title}, ({pop.title()})',
+                confidence_level=confidence_level,
+                )
+
+        output = Path('Results') / args.output
+        output = output.with_stem(f'{output.stem}-{pop.title()}')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, dpi=args.dpi)
+        plt.close(fig)
+
+        log.info(f'Plot created at {output}')
 
 
 if __name__ == '__main__':
